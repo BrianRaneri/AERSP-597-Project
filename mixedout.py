@@ -1,16 +1,20 @@
 import pandas as pd
 import numpy as np
 import os
+from scipy.interpolate import griddata
+import matplotlib.pyplot as plt
 
 class plane:
     def __init__(self,path):
         self.path=path
 
-        self.mdot = 0
-        self.x_velo = 0
-        self.static_p = 0
-        self.total_p = 0
-        self.rho = 0
+        self.mdot = None
+        self.x_velo = None
+        self.static_p = None
+        self.total_p = None
+        self.rho = None
+
+        self.df = None
 
         self.mix_out() 
 
@@ -18,7 +22,7 @@ class plane:
         df = pd.read_csv(self.path)
         Vx = df['Velocity_0'].values
         Vy = df['Velocity_1'].values
-        Vz = df['Velocity_1'].values
+        Vz = df['Velocity_2'].values
 
         nx = df['Normal_0'].values
         ny = df['Normal_1'].values
@@ -54,6 +58,80 @@ class plane:
         self.x_velo = u_mixed
         self.static_p = static_p_mixed
         self.total_p = totalP_mixed
+        self.df = df
+
+    def contour_plot(self,plot_type = 'filled',levels = 20,y_lim=None,value_col = 'RelativeTotalPressure',x_col = 'Centroid_1',y_col = 'Centroid_2',grid_res=300,c_min=None, c_max=None):
+
+
+        x = self.df[x_col].values
+        y = self.df[y_col].values
+        z = self.df[value_col].values
+
+        # Trim NAN values
+        initial_n = len(x)
+        valid_mask = (~np.isnan(x)) & (~np.isnan(y)) & (~np.isnan(z))
+        x = x[valid_mask]
+        y = y[valid_mask]
+        z = z[valid_mask]
+
+        final_n = len(x)
+
+        if (initial_n - final_n) != 0:
+            print(f"\n[Plot Cleaning] Removed {initial_n - final_n} rows "
+            f"({100*(initial_n-final_n)/initial_n:.2f}%) due to NaNs")
+        
+        # Create Grid
+        xi = np.linspace(x.min(), x.max(), grid_res)
+        yi = np.linspace(y.min(), y.max(), grid_res)
+        Xi, Yi = np.meshgrid(xi, yi)
+        
+        # Interpolate
+        Zi = griddata((x, y), z, (Xi, Yi), method='linear')
+
+
+        plt.figure()
+        levels_array = np.linspace(c_min, c_max, levels)        
+
+        # FILLED CONTOUR
+        if plot_type in ["filled", "both"]:
+            cf = plt.contourf(Xi, Yi, Zi, levels=levels_array, cmap='coolwarm',vmin=c_min,vmax=c_max)
+            plt.colorbar(cf, label=value_col)
+
+        # LINE CONTOUR
+        if plot_type in ["lines", "both"]:
+            
+            cs = plt.contour(
+                Xi, Yi, Zi,
+                levels=levels_array,
+                colors='black',
+                linewidths=0.8,
+                vmin=c_min,
+                vmax=c_max
+            )
+            plt.clabel(cs, inline=True, fontsize=8, fmt="%.2f")
+
+        if int(x_col[-1]) == 0:
+            x_axis_label = 'X'
+        elif int(x_col[-1]) == 2:
+            x_axis_label = 'Z'
+        else:
+            x_axis_label = 'Y'
+
+        if int(y_col[-1]) == 0:
+            y_axis_label = 'X'
+        elif int(y_col[-1]) == 2:
+            y_axis_label = 'Z'
+        else:
+            y_axis_label = 'Y'
+
+        plt.xlabel(x_axis_label)
+        plt.ylabel(y_axis_label)
+        plt.title(f"{value_col} Contour")
+        plt.tight_layout()    
+
+
+        if y_lim is not None:
+            plt.ylim(0, y_lim)
 
 class cfdrun:
     def __init__(self,folder_path):
@@ -82,14 +160,11 @@ class cfdrun:
         self.total_p_ratio = self.outlet_plane.total_p/self.inlet_plane.total_p
         self.total_p_loss_coeff = (self.inlet_plane.total_p-self.outlet_plane.total_p)/(0.5*self.outlet_plane.rho*self.outlet_plane.x_velo**2)
 
-
     def print_results(self):
         print(f'\n----------{self.name}----------')
         print(f'Mass Flow Error: {self.mdot_error}')
         print(f'Pt2/Pt1: {self.total_p_ratio }')
         print(f'dPt/q: {self.total_p_loss_coeff}')
-
-        pass
 
 base_dir = r"D:\Documents\PSU\2025-2026\AERSP597\Project\Results"
 
@@ -102,3 +177,6 @@ for name in os.listdir(base_dir):
 
 for cfd_run in cfd_runs:
     cfd_run.print_results()
+    #cfd_run.outlet_plane.contour_plot(plot_type = 'filled',levels = 500, y_lim = 0.05,grid_res = 500,c_min = 102500,c_max=105500)
+
+plt.show()
