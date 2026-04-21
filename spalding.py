@@ -42,6 +42,9 @@ def create_BL_profile(U_inf,delta,height=1.5,total_pressure = False):
     y_arr2 = -y_min*np.ones_like(y_total)
     y_arr_tot =np.concatenate((y_arr1,y_arr2))
 
+    #param = (u_total[-1] - u_total[0])/a
+    #print(param)
+
     output_arr = pd.DataFrame({'X':x_vals,'Y':y_arr_tot,'Z':y_combined,'Velocity_X':u_combined,'Velocity_Y':velo_y,'Velocity_Z':velo_z})
     
     return output_arr
@@ -114,25 +117,25 @@ def plot_BL(df,ax=None,y_lim = None):
 ''''''''''''''''''''''''''''''''''''''''''''
 
 Pa = 101325
-rho = 1.225
+rho = 1.18
 
 x_val = -3.5000000000000027
 W=4
 
 # Speed
-m_initial = 0.05
+m_initial = 0.1
 m_max = 0.3
 #m_steps = 6
-m_steps = 6
+m_steps = 3
 
 # BL Height Param
-channel_height = 1.5 # Chord Lengths (ft-ish), should be constant for all CFD runs
+channel_height = 1 # Chord Lengths (ft-ish), should be constant for all CFD runs
 h_param_min = 1e-3
 h_param_max = 5e-3
 
 plot = True
 total_pressureTF = False
-save = False
+save = True
 
 
 ''''''''''''''''''''''''''''''''''''''''''''
@@ -140,7 +143,7 @@ save = False
 ''''''''''''''''''''''''''''''''''''''''''''
 m_array = np.linspace(m_initial,m_max,m_steps)
 a=(1.4*287*273.15)**0.5
-h_param_array = np.arange(h_param_min,h_param_max+1e-3,1e-3)
+h_param_array = np.arange(h_param_min,h_param_max+1e-3,2e-3)
 
 BL_array = []
 
@@ -163,7 +166,7 @@ if total_pressureTF:
         print()
 
 if save:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%m_%d_%Y_%H%M")
     folder_name = f"BL_data_{timestamp}"
     os.makedirs(folder_name, exist_ok=True)
 
