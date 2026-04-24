@@ -3,6 +3,20 @@ import numpy as np
 import os
 from scipy.interpolate import griddata
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+plt.style.use('seaborn-v0_8-whitegrid')
+mpl.rcParams.update({
+    "figure.facecolor": "white",
+    "axes.facecolor": "white",
+    "axes.edgecolor": "black",
+    "grid.color": "0.85",
+    "grid.linestyle": "-",
+    "grid.linewidth": 0.8,
+    "font.size": 11,
+    "legend.frameon": True
+})
+
 class plane:
     def __init__(self,path,method='star'):
         self.path=path
@@ -182,6 +196,7 @@ class cfdrun:
         self.entropy_rise = None
         self.BL_param = float(self.name.split('_h')[1].split('_')[0])
         self.Mach = float(self.name.split('_Mach')[1].split('_')[0])
+        self.deltaPt = None
 
         self.inlet_plane = plane(folder_path+r'\inlet_data.csv',method=type)
         self.outlet_plane = plane(folder_path+r'\outlet_data.csv',method=type)
@@ -190,6 +205,7 @@ class cfdrun:
 
     def calculate_vals(self):
         self.mdot_error = abs((abs(self.inlet_plane.mdot) - self.outlet_plane.mdot) / abs(self.inlet_plane.mdot))
+        self.deltaPt = self.outlet_plane.total_p-self.inlet_plane.total_p
         self.total_p_ratio = self.outlet_plane.total_p/self.inlet_plane.total_p
         self.total_p_loss_coeff = (self.inlet_plane.total_p-self.outlet_plane.total_p)/(0.5*self.outlet_plane.rho*self.outlet_plane.x_velo**2)
         self.entropy_rise = np.log(self.inlet_plane.total_p / self.outlet_plane.total_p)
@@ -199,50 +215,107 @@ class cfdrun:
         print(f'Mass Flow Error: {self.mdot_error}')
         print(f'Pt2/Pt1: {self.total_p_ratio }')
         print(f'dPt/q: {self.total_p_loss_coeff}')
+        print(f'dPt: {self.deltaPt}')
         print(f'Entropy Rise: {self.entropy_rise}')
 
-def update_loss_vs_h_plot(cfd_run):
+class RunPlot:
+    def __init__(
+        self,
+        name,
+        xdata,
+        ydata,
+        group_by,
+        sort_by=None,
+        xlabel='',
+        ylabel='',
+        title='',
+        
+    ):
+        self.name = name
+        self.fig, self.ax = plt.subplots()
+        self.data = {}
 
-    if not hasattr(update_loss_vs_h_plot, "fig"):
-        update_loss_vs_h_plot.fig, update_loss_vs_h_plot.ax = plt.subplots()
-        update_loss_vs_h_plot.data = {}  # key = Mach, value = (h list, loss list)
+        # Data config
+        self.xdata = xdata
+        self.ydata = ydata
+        self.group_by = group_by
+        self.sort_by = sort_by if sort_by else xdata
 
-        ax = update_loss_vs_h_plot.ax
-        ax.set_xlabel('h (Boundary Layer Parameter)')
-        ax.set_ylabel('Total Pressure Loss Coefficient (ΔPt/q)')
-        ax.set_title('Total Pressure Loss vs h')
-        ax.grid()
-
-    Mach = cfd_run.Mach
-
-    if Mach not in update_loss_vs_h_plot.data:
-        update_loss_vs_h_plot.data[Mach] = {"h": [], "loss": []}
-
-
-    update_loss_vs_h_plot.data[Mach]["h"].append(cfd_run.BL_param)
-    update_loss_vs_h_plot.data[Mach]["loss"].append(cfd_run.total_p_loss_coeff)
-
-  
-    ax = update_loss_vs_h_plot.ax
-    ax.cla()
-
-
-    for Mach, vals in sorted(update_loss_vs_h_plot.data.items()):
-        h_vals = vals["h"]
-        loss_vals = vals["loss"]
+        self.markers = ['o', 's', '^']
+        #self.linestyles = ['-', '--', ':']
+        self.linestyles = ['-', '--', '-.']
 
 
-        data_sorted = sorted(zip(h_vals, loss_vals))
-        h_sorted, loss_sorted = zip(*data_sorted)
+        # Labels
+        self.xlabel = xlabel if xlabel else xdata
+        self.ylabel = ylabel if ylabel else ydata
+        self.title = title if title else f'{ydata} vs {xdata}'
 
-        ax.plot(h_sorted, loss_sorted, marker='o', label=f'Mach {Mach}')
+        self.ax.set_xlabel(self.xlabel)
+        self.ax.set_ylabel(self.ylabel)
+        self.ax.set_title(self.title)
+        self.ax.grid()
 
-    # Reapply labels
-    ax.set_xlabel('h (Boundary Layer Parameter)')
-    ax.set_ylabel('Total Pressure Loss Coefficient (ΔPt/q)')
-    ax.set_title('Total Pressure Loss vs h')
-    ax.grid()
-    ax.legend()
+    def add(self, cfd_run):
+        # Extract values
+        group_val = getattr(cfd_run, self.group_by)
+
+        x_val = getattr(cfd_run, self.xdata)
+        y_val = getattr(cfd_run, self.ydata)
+        sort_val = getattr(cfd_run, self.sort_by)
+
+        # Initialize group
+        if group_val not in self.data:
+            self.data[group_val] = {"x": [], "y": [], "sort": []}
+
+        self.data[group_val]["x"].append(x_val)
+        self.data[group_val]["y"].append(y_val)
+        self.data[group_val]["sort"].append(sort_val)
+
+    def update_plot(self):
+        self.ax.cla()
+
+        if not self.data:
+            return
+
+        for i, (group, vals) in enumerate(sorted(self.data.items())):
+            combined = list(zip(vals["sort"], vals["x"], vals["y"]))
+            combined.sort()
+
+            _, x_sorted, y_sorted = zip(*combined)
+
+            marker = self.markers[i %len(self.markers)]
+            linestyle = self.linestyles[i %len(self.linestyles)]
+
+            self.ax.plot(
+                x_sorted,
+                y_sorted,
+                marker=marker,
+                linestyle = linestyle,
+                linewidth =  2,
+                markersize = 7,
+                label=f'{self.group_by} {group}',
+                color = 'black'
+            )
+
+        self.ax.set_xlabel(self.xlabel)
+        self.ax.set_ylabel(self.ylabel)
+        self.ax.set_title(self.title)
+        self.ax.grid(True, linewidth = 0.8,alpha =0.4, linestyle='-')
+        self.ax.legend()
+
+    def save(self, folder="plots"):
+        os.makedirs(folder, exist_ok=True)
+        filepath = os.path.join(folder, f"{self.name}.png")
+        self.fig.savefig(filepath, dpi=300)
+
+    def reset(self):
+        self.data = {}
+        self.ax.cla()
+        self.ax.set_xlabel(self.xlabel)
+        self.ax.set_ylabel(self.ylabel)
+        self.ax.set_title(self.title)
+        self.ax.grid()
 
 base_dir = r"D:\Documents\PSU\2025-2026\AERSP597\Project\Results"
 
@@ -253,9 +326,65 @@ for name in os.listdir(base_dir):
     if os.path.isdir(full_path):
         cfd_runs.append(cfdrun(full_path,type='star'))
 
+plot_configs = [
+    {
+        "name": "loss_vs_bl",
+        "xdata": "BL_param",
+        "ydata": "total_p_loss_coeff",
+        "group_by": "Mach",
+        "sort_by": "Mach",
+        "xlabel": "h (BL Parameter)",
+        "ylabel": "Total Pressure Loss Coefficient",
+        "title": "Loss vs BL Parameter"
+    },
+    {
+        "name": "dpt_vs_bl",
+        "xdata": "BL_param",
+        "ydata": "deltaPt",
+        "group_by": "Mach",
+        "sort_by": "Mach",
+        "xlabel": "h (BL Parameter)",
+        "ylabel": "Total Pressure Loss",
+        "title": "ΔPt vs BL Parameter"
+    },
+    {
+        "name": "losscoeff_vs_mach",
+        "xdata": "Mach",
+        "ydata": "total_p_loss_coeff",
+        "group_by": "BL_param",
+        "sort_by": "BL_param",
+        "xlabel": "Mach",
+        "ylabel": "Total Pressure Loss Coefficient",
+        "title": "Loss Coefficient vs Mach"
+    },
+    {
+        "name": "dpt_vs_mach",
+        "xdata": "Mach",
+        "ydata": "deltaPt",
+        "group_by": "BL_param",
+        "sort_by": "BL_param",
+        "xlabel": "Mach",
+        "ylabel": "Total Pressure Loss",
+        "title": "ΔPt vs Mach"
+    },
+        {
+        "name": "Entropy_Rise_vs_mach",
+        "xdata": "Mach",
+        "ydata": "entropy_rise",
+        "group_by": "BL_param",
+        "sort_by": "BL_param",
+        "xlabel": "Mach",
+        "ylabel": "Entropy Rise",
+        "title": "dS vs Mach"
+    }
+]
+plots = {cfg["name"]: RunPlot(**cfg) for cfg in plot_configs}
+
 for cfd_run in cfd_runs:
     cfd_run.print_results()
 
+    for plot in plots.values():
+        plot.add(cfd_run)
     '''
 
     cfd_run.outlet_plane.contour_plot(name = (cfd_run.name + ' Outlet - Velocity i'), 
@@ -267,7 +396,6 @@ for cfd_run in cfd_runs:
                                       vmin = 0,
                                       vmax = 80)
     
-    '''
     
     cfd_run.outlet_plane.contour_plot(name = (cfd_run.name + ' Outlet - Vorticity i'), 
                                     value_col='Vorticity[i] (/s)',
@@ -278,11 +406,10 @@ for cfd_run in cfd_runs:
                                     vmin = -65000,
                                     vmax = 65000)
 
-
-
-    
-    update_loss_vs_h_plot(cfd_run)
+    '''
 
     #cfd_run.inlet_plane.contour_plot(name = (cfd_run.name + ' Inlet - Vorticity j'), value_col = 'Vorticityj', plot_type = 'filled',levels = 500, y_lim = 0.025,grid_res = 5000)
 
+for plot in plots.values():
+    plot.update_plot()
 plt.show()
