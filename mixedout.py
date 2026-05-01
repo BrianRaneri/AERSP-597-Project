@@ -4,6 +4,7 @@ import os
 from scipy.interpolate import griddata
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import sys
 
 plt.style.use('seaborn-v0_8-whitegrid')
 mpl.rcParams.update({
@@ -16,8 +17,6 @@ mpl.rcParams.update({
     "font.size": 11,
     "legend.frameon": True
 })
-
-
 
 class plane:
     def __init__(self,path,method='star'):
@@ -32,6 +31,10 @@ class plane:
         self.df = None
         self.circulation = None
         self.half_circulation = None
+        self.a_avg_vorticitymag = None
+        self.a_avg_vorticity_y = None
+        self.omega_rms = None
+        self.enstrophy = None
 
 
         if method == 'star':
@@ -113,12 +116,13 @@ class plane:
 
         mask = (
             (y >= -2) & (y <= 2) &
-            (z >= 0) & (z <= 1)
+            (z >= 0) & (z <= 0.05)
             )
 
         m_dot_total = np.sum(m_dot_local[mask])
         mom_total = np.sum(mom_local[mask])
         area_total = np.sum(A_mag[mask])
+        
 
         u_mixed = m_dot_total / (rho*area_total)
         static_p_mixed = mom_total / area_total - rho * u_mixed**2
@@ -133,6 +137,11 @@ class plane:
         wz = df['Vorticity[k] (/s)'].values
         omega_n = wx * nx + wy * ny + wz * nz
         self.circulation = np.sum(omega_n * A_mag)
+
+        omega_mag = np.sqrt(wx**2 + wy**2 + wz**2)
+        self.a_avg_vorticitymag = np.sum(omega_mag[mask] * A_mag[mask]) / np.sum(A_mag[mask])
+        self.a_avg_vorticity_y = np.sum(wy[mask]*A_mag[mask])/np.sum(A_mag[mask])
+        self.enstrophy = np.sum((wx**2 + wy**2 + wz**2) * A_mag)
 
         mask = (
             (y >= 0) & (y <= 2) &
@@ -245,6 +254,10 @@ class cfdrun:
         self.half_circulation = None
         self.gamma_param = None
         self.vout = None
+        self.a_avg_vorticitymag = None
+        self.a_avg_vorticity_y = None
+        self.a_avg_vorticity_ratio = None
+        self.enstrophy_ratio = None
 
         self.inlet_plane = plane(folder_path+r'\inlet_data.csv',method=type)
         self.outlet_plane = plane(folder_path+r'\outlet_data.csv',method=type)
@@ -265,6 +278,13 @@ class cfdrun:
         self.gamma_param = self.half_circulation/self.a
         self.gamma_out_gamma_in = self.gamma_param/self.Mach
         self.vout = self.outlet_plane.x_velo/(self.a*self.Mach)
+        self.a_avg_vorticitymag = self.outlet_plane.a_avg_vorticitymag
+        self.a_avg_vorticity_y = self.inlet_plane.a_avg_vorticity_y
+        self.a_avg_vorticity_ratio = self.inlet_plane.a_avg_vorticitymag/self.inlet_plane.a_avg_vorticity_y
+        self.inlet_rms = self.inlet_plane.omega_rms
+        self.outlet_rms = self.outlet_plane.omega_rms
+        self.enstrophy_ratio = self.outlet_plane.enstrophy/self.inlet_plane.enstrophy
+        #self.enstrophy_ratio = self.inlet_plane.enstrophy
 
     def print_results(self):
         print(f'\n----------{self.name}----------')
@@ -274,6 +294,7 @@ class cfdrun:
         print(f'dPt: {self.deltaPt}')
         print(f'Entropy Rise: {self.entropy_rise}')
         print(f'Gamma Parameter (gamma/(L*a)): {self.gamma_param}')
+        print(f'Area Averaged Vorticity Magnitude: {self.a_avg_vorticitymag}')
 
 class RunPlot:
     def __init__(
@@ -486,8 +507,20 @@ plot_configs = [
         "xlabel": "BL_param",
         "ylabel": "Mixed Out Velocity (m/s)",
         "title": "MixedOutVelocity vs BL_param"
+    },
+        {
+        "name": "EnstrophyRatio",
+        "xdata": "BL_param",
+        "ydata": "enstrophy_ratio",
+        "group_by": "Mach",
+        "sort_by": "Mach",
+        "xlabel": "BL_param",
+        "ylabel": "enstrophy_ratio (out/in)",
+        "title": "Enstrophy Ratio vs BL_param (Inlet)"
     }
 ]
+
+
 plots = {cfg["name"]: RunPlot(**cfg) for cfg in plot_configs}
 
 for cfd_run in cfd_runs:
@@ -505,6 +538,9 @@ mach_list = [0.3]
 bl_list   = sorted(set(run.BL_param for run in cfd_runs))
 vscale = {0.1: 70000,0.2: 100000,0.3: 150000}
 # 31606.76506,61150.77373,92205.51357
+
+plt.show()
+sys.exit()
 
 # Vorticity Plot
 for mach in mach_list:
@@ -525,10 +561,10 @@ for mach in mach_list:
         if matching_runs:
 
             run = matching_runs[0]
-            run.outlet_plane.contour_plot(
+            run.inlet_plane.contour_plot(
                 ax=ax,
                 name=f"BL = {bl_param}",
-                value_col='Vorticity[i] (/s)',
+                value_col='Vorticity[j] (/s)',
                 plot_type='filled',
                 deadband=0,
                 levels=500,
@@ -625,42 +661,4 @@ for mach in mach_list:
         colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
         colorbar.set_ticks(np.linspace(0, vmax, ticks))
 
-# Velocity Plot
-for mach in mach_list:
-
-    vmax = 150
-    ticks = len(np.arange(0, vmax + 25, 150))
-    if ticks<=5:
-        ticks = 9
-
-    fig, axes = plt.subplots(1, len(bl_list), figsize=(5*len(bl_list), 4),
-                             constrained_layout=True)
-    
-    for ax, bl_param in zip(axes, bl_list):        
-
-        matching_runs = [run for run in cfd_runs if run.Mach == 0.3 and run.BL_param == bl_param]
-
-        if matching_runs:
-
-            run = matching_runs[0]
-            run.outlet_plane.contour_plot(
-                ax=ax,
-                name=f"BL = {bl_param}",
-                value_col='Velocity[i] (m/s)',
-                plot_type='filled',
-                deadband=0,
-                levels=500,
-                y_lim=0.005,
-                vmin=0,
-                vmax=vmax,
-                cmap = 'plasma'
-            )
-
-            contour_obj = ax.collections[0]
-
-    fig.suptitle(f"Outlet Velocity Contours [i] — Mach {mach}", fontsize=16)
-
-    if contour_obj is not None:
-        colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
-        colorbar.set_ticks(np.linspace(0, vmax, ticks))
 plt.show()
