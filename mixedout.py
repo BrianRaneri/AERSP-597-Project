@@ -17,6 +17,8 @@ mpl.rcParams.update({
     "legend.frameon": True
 })
 
+
+
 class plane:
     def __init__(self,path,method='star'):
         self.path=path
@@ -28,6 +30,8 @@ class plane:
         self.rho = None
 
         self.df = None
+        self.circulation = None
+        self.half_circulation = None
 
 
         if method == 'star':
@@ -77,7 +81,6 @@ class plane:
         self.total_p = totalP_mixed
         self.df = df
 
-
     def mix_out_star(self):
         df = pd.read_csv(self.path)
         Vx = df['Velocity[i] (m/s)'].values
@@ -103,16 +106,39 @@ class plane:
         m_dot_local = rho*u_norm*A_mag
         mom_local = (rho*u_norm**2+static_p) * A_mag
 
-        m_dot_total = np.sum(m_dot_local)
-        mom_total = np.sum(mom_local)
-        area_total = np.sum(A_mag)
+        y = df['Centroid[Y] (m)'].values
+        z = df['Centroid[Z] (m)'].values
+
+        # Trim Testing
+
+        mask = (
+            (y >= -2) & (y <= 2) &
+            (z >= 0) & (z <= 1)
+            )
+
+        m_dot_total = np.sum(m_dot_local[mask])
+        mom_total = np.sum(mom_local[mask])
+        area_total = np.sum(A_mag[mask])
 
         u_mixed = m_dot_total / (rho*area_total)
         static_p_mixed = mom_total / area_total - rho * u_mixed**2
         totalP_mixed = static_p_mixed + 0.5 * rho * u_mixed**2
 
         Pt_local = static_p + 0.5 * rho * (Vx**2 + Vy**2 + Vz**2)
-        Pt_area_avg = np.sum(Pt_local * A_mag) / area_total
+        Pt_area_avg = np.sum(Pt_local[mask] * A_mag[mask]) / area_total
+
+        # Circulation Calcs
+        wx = df['Vorticity[i] (/s)'].values
+        wy = df['Vorticity[j] (/s)'].values
+        wz = df['Vorticity[k] (/s)'].values
+        omega_n = wx * nx + wy * ny + wz * nz
+        self.circulation = np.sum(omega_n * A_mag)
+
+        mask = (
+            (y >= 0) & (y <= 2) &
+            (z >= 0) & (z <= 1)
+            )
+        self.half_circulation = np.sum(omega_n[mask] * A_mag[mask])
 
         self.mdot = m_dot_total
         self.x_velo = u_mixed
@@ -120,7 +146,7 @@ class plane:
         self.total_p = totalP_mixed
         self.df = df
 
-    def contour_plot(self,name = None,plot_type = 'filled',levels = 20,y_lim=None,value_col = 'Vorticity[i] (/s)',x_col = 'Centroid[Y] (m)',y_col = 'Centroid[Z] (m)',deadband=0,vmin = 0, vmax=50000):
+    def contour_plot(self,name = None,plot_type = 'filled',levels = 20,y_lim=None,value_col = 'Vorticity[i] (/s)',x_col = 'Centroid[Y] (m)',y_col = 'Centroid[Z] (m)',deadband=0,vmin = 0, vmax=50000,ax=None,cmap='bwr'):
 
 
         x = self.df[x_col].values
@@ -139,47 +165,64 @@ class plane:
         if (initial_n - final_n) != 0:
             print(f"\n[Plot Cleaning] Removed {initial_n - final_n} rows "
             f"({100*(initial_n-final_n)/initial_n:.2f}%) due to NaNs")
-        
-        plt.figure()
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(6,5))
+            standalone = True
+        else:
+            standalone = False
+    
         #levels_array = np.linspace(c_min, c_max, levels)   
 
         if deadband == 0:
             levels = np.linspace(vmin,vmax,200)
         else:
-            levels = np.concatenate([np.linspace(-vmax,-deadband,100),np.linspace(vmax,deadband,100)])  
+            levels = np.concatenate([np.linspace(vmin,-deadband,100),np.linspace(vmax,deadband,100)])  
         
         levels = np.sort(levels)
 
+        #cmap='bwr'
+
         # FILLED CONTOUR
         if plot_type in ["filled", "both"]:
-            cf = plt.tricontourf(x, y, z, levels=levels,cmap='bwr',vmin=vmin,vmax=vmax)
-            plt.colorbar(cf)
+            cf = ax.tricontourf(x, y, z, levels=levels,cmap=cmap,vmin=vmin,vmax=vmax,extend='neither')
+            ax.set_axisbelow(False)   # puts grid above contourf
+            ax.grid(True, linestyle='--', alpha=0.4)
+            if standalone:
+                plt.colorbar(cf, ax=ax)
+
+            
 
         # LINE CONTOUR
         if plot_type in ["lines", "both"]:
             
-            cs = plt.tricontour(
+            cs = ax.tricontour(
                 x, y, z,
                 colors='black',
                 linewidths=0.8)
-            plt.clabel(cs, inline=True, fontsize=8, fmt="%.2f")
+            ax.clabel(cs, inline=True, fontsize=8, fmt="%.2f")
 
         x_axis_label = 'Y'
         y_axis_label = 'Z'
 
-        plt.xlabel(x_axis_label)
-        plt.ylabel(y_axis_label)
-        plt.xlim([-2,2])
-        plt.title(name)
-        plt.tight_layout()    
+        if standalone:
+            plt.tight_layout()
+
+        ax.set_xlabel(x_axis_label)
+        ax.set_ylabel(y_axis_label)
+        ax.set_xlim([-2,2])
+        ax.set_title(name)   
 
 
         if y_lim is not None:
-            plt.ylim(0, y_lim)
+            ax.set_ylim(0, y_lim)
+
+        return ax
 
 class cfdrun:
     def __init__(self,folder_path,type='star'):
         self.name = os.path.basename(folder_path)
+        self.a = (1.4*287*273.15)**0.5
         self.folder_path = folder_path
         self.mdot_in = None
         self.mdot_out = None
@@ -197,6 +240,11 @@ class cfdrun:
         self.BL_param = float(self.name.split('_h')[1].split('_')[0])
         self.Mach = float(self.name.split('_Mach')[1].split('_')[0])
         self.deltaPt = None
+        self.normdeltaPt = None
+        self.total_outlet_circulation = None
+        self.half_circulation = None
+        self.gamma_param = None
+        self.vout = None
 
         self.inlet_plane = plane(folder_path+r'\inlet_data.csv',method=type)
         self.outlet_plane = plane(folder_path+r'\outlet_data.csv',method=type)
@@ -204,11 +252,19 @@ class cfdrun:
         self.calculate_vals()
 
     def calculate_vals(self):
+        self.static_p_in = self.inlet_plane.static_p
         self.mdot_error = abs((abs(self.inlet_plane.mdot) - self.outlet_plane.mdot) / abs(self.inlet_plane.mdot))
         self.deltaPt = self.outlet_plane.total_p-self.inlet_plane.total_p
         self.total_p_ratio = self.outlet_plane.total_p/self.inlet_plane.total_p
         self.total_p_loss_coeff = (self.inlet_plane.total_p-self.outlet_plane.total_p)/(0.5*self.outlet_plane.rho*self.outlet_plane.x_velo**2)
         self.entropy_rise = np.log(self.inlet_plane.total_p / self.outlet_plane.total_p)
+        self.total_p_in = self.inlet_plane.total_p
+        self.normdeltaPt =  self.deltaPt / self.total_p_in
+        self.total_outlet_circulation = self.outlet_plane.circulation
+        self.half_circulation = self.outlet_plane.half_circulation
+        self.gamma_param = self.half_circulation/self.a
+        self.gamma_out_gamma_in = self.gamma_param/self.Mach
+        self.vout = self.outlet_plane.x_velo/(self.a*self.Mach)
 
     def print_results(self):
         print(f'\n----------{self.name}----------')
@@ -217,6 +273,7 @@ class cfdrun:
         print(f'dPt/q: {self.total_p_loss_coeff}')
         print(f'dPt: {self.deltaPt}')
         print(f'Entropy Rise: {self.entropy_rise}')
+        print(f'Gamma Parameter (gamma/(L*a)): {self.gamma_param}')
 
 class RunPlot:
     def __init__(
@@ -294,8 +351,7 @@ class RunPlot:
                 linestyle = linestyle,
                 linewidth =  2,
                 markersize = 7,
-                label=f'{self.group_by} {group}',
-                color = 'black'
+                label=f'{self.group_by} {group}'
             )
 
         self.ax.set_xlabel(self.xlabel)
@@ -326,7 +382,7 @@ for name in os.listdir(base_dir):
     if os.path.isdir(full_path):
         cfd_runs.append(cfdrun(full_path,type='star'))
 
-plot_configs = [
+'''plot_configs = [
     {
         "name": "loss_vs_bl",
         "xdata": "BL_param",
@@ -340,12 +396,12 @@ plot_configs = [
     {
         "name": "dpt_vs_bl",
         "xdata": "BL_param",
-        "ydata": "deltaPt",
+        "ydata": "normdeltaPt",
         "group_by": "Mach",
         "sort_by": "Mach",
         "xlabel": "h (BL Parameter)",
         "ylabel": "Total Pressure Loss",
-        "title": "ΔPt vs BL Parameter"
+        "title": "ΔPt/P_t_in vs BL Parameter"
     },
     {
         "name": "losscoeff_vs_mach",
@@ -360,12 +416,12 @@ plot_configs = [
     {
         "name": "dpt_vs_mach",
         "xdata": "Mach",
-        "ydata": "deltaPt",
+        "ydata": "normdeltaPt",
         "group_by": "BL_param",
         "sort_by": "BL_param",
         "xlabel": "Mach",
         "ylabel": "Total Pressure Loss",
-        "title": "ΔPt vs Mach"
+        "title": "ΔPt/P_t_in vs Mach"
     },
         {
         "name": "Entropy_Rise_vs_mach",
@@ -374,8 +430,62 @@ plot_configs = [
         "group_by": "BL_param",
         "sort_by": "BL_param",
         "xlabel": "Mach",
-        "ylabel": "Entropy Rise",
+        "ylabel": "Entropy Rise/R",
         "title": "dS vs Mach"
+    },
+        {
+        "name": "Circulation",
+        "xdata": "BL_param",
+        "ydata": "gamma_out_gamma_in",
+        "group_by": "Mach",
+        "sort_by": "Mach",
+        "xlabel": "BL_param",
+        "ylabel": "Circulation Ratio (out/in)",
+        "title": "Circulation vs BL_param"
+    },
+        {
+        "name": "MixedOutVelo",
+        "xdata": "BL_param",
+        "ydata": "vout",
+        "group_by": "Mach",
+        "sort_by": "Mach",
+        "xlabel": "BL_param",
+        "ylabel": "Mixed Out Velocity (m/s)",
+        "title": "MixedOutVelocity vs BL_param"
+    }
+]
+'''
+
+plot_configs = [
+    {
+        "name": "loss_vs_bl",
+        "xdata": "BL_param",
+        "ydata": "total_p_loss_coeff",
+        "group_by": "Mach",
+        "sort_by": "Mach",
+        "xlabel": "h (BL Parameter)",
+        "ylabel": "Total Pressure Loss Coefficient",
+        "title": "Loss vs BL Parameter"
+    },
+        {
+        "name": "Circulation",
+        "xdata": "BL_param",
+        "ydata": "gamma_out_gamma_in",
+        "group_by": "Mach",
+        "sort_by": "Mach",
+        "xlabel": "BL_param",
+        "ylabel": "Circulation Ratio (out/in)",
+        "title": "Circulation vs BL_param"
+    },
+        {
+        "name": "MixedOutVelo",
+        "xdata": "BL_param",
+        "ydata": "vout",
+        "group_by": "Mach",
+        "sort_by": "Mach",
+        "xlabel": "BL_param",
+        "ylabel": "Mixed Out Velocity (m/s)",
+        "title": "MixedOutVelocity vs BL_param"
     }
 ]
 plots = {cfg["name"]: RunPlot(**cfg) for cfg in plot_configs}
@@ -385,6 +495,77 @@ for cfd_run in cfd_runs:
 
     for plot in plots.values():
         plot.add(cfd_run)
+
+for plot in plots.values():
+    plot.update_plot()
+    plot.save()
+
+#mach_list = sorted(set(run.Mach for run in cfd_runs))
+mach_list = [0.3]
+bl_list   = sorted(set(run.BL_param for run in cfd_runs))
+vscale = {0.1: 70000,0.2: 100000,0.3: 150000}
+# 31606.76506,61150.77373,92205.51357
+
+# Vorticity Plot
+for mach in mach_list:
+
+    vmax = vscale[mach]
+    ticks = len(np.arange(-vmax, vmax + 25000, 25000))
+    if ticks<=5:
+        ticks = 9
+
+
+    fig, axes = plt.subplots(1, len(bl_list), figsize=(5*len(bl_list), 4),
+                             constrained_layout=True)
+    
+    for ax, bl_param in zip(axes, bl_list):        
+
+        matching_runs = [run for run in cfd_runs if run.Mach == 0.3 and run.BL_param == bl_param]
+
+        if matching_runs:
+
+            run = matching_runs[0]
+            run.outlet_plane.contour_plot(
+                ax=ax,
+                name=f"BL = {bl_param}",
+                value_col='Vorticity[i] (/s)',
+                plot_type='filled',
+                deadband=0,
+                levels=500,
+                y_lim=0.005,
+                vmin=-vmax,
+                vmax=vmax,
+                cmap = 'RdBu'
+            )
+
+            contour_obj = ax.collections[0]
+
+    fig.suptitle(f"Outlet Vorticity Contours [i] — Mach {mach}", fontsize=16)
+
+    if contour_obj is not None:
+        colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
+        colorbar.set_ticks(np.linspace(-vmax, vmax, ticks))
+
+
+
+    '''
+    if cfd_run.Mach == 0.3:
+        if cfd_run.BL_param == 0.005:
+                pass
+        
+    
+    cfd_run.outlet_plane.contour_plot(name = (cfd_run.name + ' Outlet - Vorticity i'), 
+                        value_col='Vorticity[i] (/s)',
+                        plot_type = 'filled',
+                        deadband = 0,
+                        levels = 500, 
+                        y_lim = 0.01,
+                        vmin = -100000,
+                        vmax = 100000)
+
+    '''
+
+    
     '''
 
     cfd_run.outlet_plane.contour_plot(name = (cfd_run.name + ' Outlet - Velocity i'), 
@@ -395,21 +576,91 @@ for cfd_run in cfd_runs:
                                       y_lim = 0.01,
                                       vmin = 0,
                                       vmax = 80)
-    
-    
-    cfd_run.outlet_plane.contour_plot(name = (cfd_run.name + ' Outlet - Vorticity i'), 
-                                    value_col='Vorticity[i] (/s)',
-                                    plot_type = 'filled',
-                                    deadband = 0,
-                                    levels = 500, 
-                                    y_lim = 0.01,
-                                    vmin = -65000,
-                                    vmax = 65000)
-
     '''
+    
+    
+
+
+    
 
     #cfd_run.inlet_plane.contour_plot(name = (cfd_run.name + ' Inlet - Vorticity j'), value_col = 'Vorticityj', plot_type = 'filled',levels = 500, y_lim = 0.025,grid_res = 5000)
 
-for plot in plots.values():
-    plot.update_plot()
+# Vorticity Magnitude
+for mach in mach_list:
+
+    vmax = vscale[mach]
+    ticks = len(np.arange(0, vmax + 25000, 25000))
+    if ticks<=5:
+        ticks = 9
+
+
+    fig, axes = plt.subplots(1, len(bl_list), figsize=(5*len(bl_list), 4),
+                             constrained_layout=True)
+    
+    for ax, bl_param in zip(axes, bl_list):        
+
+        matching_runs = [run for run in cfd_runs if run.Mach == 0.3 and run.BL_param == bl_param]
+
+        if matching_runs:
+
+            run = matching_runs[0]
+            run.outlet_plane.contour_plot(
+                ax=ax,
+                name=f"BL = {bl_param}",
+                value_col='Vorticity: Magnitude (/s)',
+                plot_type='filled',
+                deadband=0,
+                levels=500,
+                y_lim=0.005,
+                vmin=0,
+                vmax=vmax,
+                cmap = 'plasma'
+            )
+
+            contour_obj = ax.collections[0]
+
+    fig.suptitle(f"Outlet Vorticity Magnitude — Mach {mach}", fontsize=16)
+
+    if contour_obj is not None:
+        colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
+        colorbar.set_ticks(np.linspace(0, vmax, ticks))
+
+# Velocity Plot
+for mach in mach_list:
+
+    vmax = 150
+    ticks = len(np.arange(0, vmax + 25, 150))
+    if ticks<=5:
+        ticks = 9
+
+    fig, axes = plt.subplots(1, len(bl_list), figsize=(5*len(bl_list), 4),
+                             constrained_layout=True)
+    
+    for ax, bl_param in zip(axes, bl_list):        
+
+        matching_runs = [run for run in cfd_runs if run.Mach == 0.3 and run.BL_param == bl_param]
+
+        if matching_runs:
+
+            run = matching_runs[0]
+            run.outlet_plane.contour_plot(
+                ax=ax,
+                name=f"BL = {bl_param}",
+                value_col='Velocity[i] (m/s)',
+                plot_type='filled',
+                deadband=0,
+                levels=500,
+                y_lim=0.005,
+                vmin=0,
+                vmax=vmax,
+                cmap = 'plasma'
+            )
+
+            contour_obj = ax.collections[0]
+
+    fig.suptitle(f"Outlet Velocity Contours [i] — Mach {mach}", fontsize=16)
+
+    if contour_obj is not None:
+        colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
+        colorbar.set_ticks(np.linspace(0, vmax, ticks))
 plt.show()
