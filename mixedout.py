@@ -3,8 +3,10 @@ import numpy as np
 import os
 from scipy.interpolate import griddata
 import matplotlib.pyplot as plt
+import matplotlib.colors as colors
 import matplotlib as mpl
 import sys
+import seaborn as sns
 
 plt.style.use('seaborn-v0_8-whitegrid')
 mpl.rcParams.update({
@@ -36,11 +38,19 @@ class plane:
         self.omega_rms = None
         self.enstrophy = None
 
-
         if method == 'star':
             self.mix_out_star() 
-        else:
+        elif method == 'paraview':
             self.mix_out()
+        else:
+            self.df = pd.read_csv(path)
+
+        self.add_data()
+
+    def add_data(self):
+        self.df['Vorticity[i] Magnitude (/s)'] = np.abs(self.df['Vorticity[i] (/s)'])
+        self.df['Vorticity[j] Magnitude (/s)'] = np.abs(self.df['Vorticity[j] (/s)'])
+        self.df['Vorticity[k] Magnitude (/s)'] = np.abs(self.df['Vorticity[k] (/s)'])
 
     def mix_out(self):
         df = pd.read_csv(self.path)
@@ -155,7 +165,7 @@ class plane:
         self.total_p = totalP_mixed
         self.df = df
 
-    def contour_plot(self,name = None,plot_type = 'filled',levels = 20,y_lim=None,value_col = 'Vorticity[i] (/s)',x_col = 'Centroid[Y] (m)',y_col = 'Centroid[Z] (m)',deadband=0,vmin = 0, vmax=50000,ax=None,cmap='bwr'):
+    def contour_plot(self,name = None,plot_type = 'filled',levels = 20,y_lim=None,value_col = 'Vorticity[i] (/s)',x_col = 'Centroid[Y] (m)',y_col = 'Centroid[Z] (m)',deadband=0,vmin = 0, vmax=50000,ax=None,cmap='bwr',norm=None,x_lim_min=None,x_lim_max=None):
 
 
         x = self.df[x_col].values
@@ -187,19 +197,16 @@ class plane:
             levels = np.linspace(vmin,vmax,200)
         else:
             levels = np.concatenate([np.linspace(vmin,-deadband,100),np.linspace(vmax,deadband,100)])  
-        
-        levels = np.sort(levels)
 
-        #cmap='bwr'
+        levels = np.sort(levels)
 
         # FILLED CONTOUR
         if plot_type in ["filled", "both"]:
-            cf = ax.tricontourf(x, y, z, levels=levels,cmap=cmap,vmin=vmin,vmax=vmax,extend='neither')
+            cf = ax.tricontourf(x, y, z, levels=levels,cmap=cmap,vmin=vmin,vmax=vmax,extend='neither',norm=norm)
             ax.set_axisbelow(False)   # puts grid above contourf
             ax.grid(True, linestyle='--', alpha=0.4)
             if standalone:
                 plt.colorbar(cf, ax=ax)
-
             
 
         # LINE CONTOUR
@@ -219,12 +226,13 @@ class plane:
 
         ax.set_xlabel(x_axis_label)
         ax.set_ylabel(y_axis_label)
-        ax.set_xlim([-2,2])
         ax.set_title(name)   
 
 
         if y_lim is not None:
             ax.set_ylim(0, y_lim)
+        if x_lim_min or x_lim_max is not None:
+            ax.set_xlim(x_lim_min,x_lim_max)
 
         return ax
 
@@ -262,6 +270,11 @@ class cfdrun:
         self.inlet_plane = plane(folder_path+r'\inlet_data.csv',method=type)
         self.outlet_plane = plane(folder_path+r'\outlet_data.csv',method=type)
 
+        if os.path.exists(folder_path+r'\z_slice_BL.csv'):
+            self.BL_slice = plane(folder_path+r'\z_slice_BL.csv', method='Floor')
+        else:
+            self.BL_slice = None
+
         self.calculate_vals()
 
     def calculate_vals(self):
@@ -284,7 +297,6 @@ class cfdrun:
         self.inlet_rms = self.inlet_plane.omega_rms
         self.outlet_rms = self.outlet_plane.omega_rms
         self.enstrophy_ratio = self.outlet_plane.enstrophy/self.inlet_plane.enstrophy
-        #self.enstrophy_ratio = self.inlet_plane.enstrophy
 
     def print_results(self):
         print(f'\n----------{self.name}----------')
@@ -394,7 +406,7 @@ class RunPlot:
         self.ax.set_title(self.title)
         self.ax.grid()
 
-base_dir = r"D:\Documents\PSU\2025-2026\AERSP597\Project\Results"
+base_dir = os.path.join(os.path.dirname(__file__), "Results")
 
 cfd_runs = []
 for name in os.listdir(base_dir):
@@ -402,80 +414,6 @@ for name in os.listdir(base_dir):
     
     if os.path.isdir(full_path):
         cfd_runs.append(cfdrun(full_path,type='star'))
-
-'''plot_configs = [
-    {
-        "name": "loss_vs_bl",
-        "xdata": "BL_param",
-        "ydata": "total_p_loss_coeff",
-        "group_by": "Mach",
-        "sort_by": "Mach",
-        "xlabel": "h (BL Parameter)",
-        "ylabel": "Total Pressure Loss Coefficient",
-        "title": "Loss vs BL Parameter"
-    },
-    {
-        "name": "dpt_vs_bl",
-        "xdata": "BL_param",
-        "ydata": "normdeltaPt",
-        "group_by": "Mach",
-        "sort_by": "Mach",
-        "xlabel": "h (BL Parameter)",
-        "ylabel": "Total Pressure Loss",
-        "title": "ΔPt/P_t_in vs BL Parameter"
-    },
-    {
-        "name": "losscoeff_vs_mach",
-        "xdata": "Mach",
-        "ydata": "total_p_loss_coeff",
-        "group_by": "BL_param",
-        "sort_by": "BL_param",
-        "xlabel": "Mach",
-        "ylabel": "Total Pressure Loss Coefficient",
-        "title": "Loss Coefficient vs Mach"
-    },
-    {
-        "name": "dpt_vs_mach",
-        "xdata": "Mach",
-        "ydata": "normdeltaPt",
-        "group_by": "BL_param",
-        "sort_by": "BL_param",
-        "xlabel": "Mach",
-        "ylabel": "Total Pressure Loss",
-        "title": "ΔPt/P_t_in vs Mach"
-    },
-        {
-        "name": "Entropy_Rise_vs_mach",
-        "xdata": "Mach",
-        "ydata": "entropy_rise",
-        "group_by": "BL_param",
-        "sort_by": "BL_param",
-        "xlabel": "Mach",
-        "ylabel": "Entropy Rise/R",
-        "title": "dS vs Mach"
-    },
-        {
-        "name": "Circulation",
-        "xdata": "BL_param",
-        "ydata": "gamma_out_gamma_in",
-        "group_by": "Mach",
-        "sort_by": "Mach",
-        "xlabel": "BL_param",
-        "ylabel": "Circulation Ratio (out/in)",
-        "title": "Circulation vs BL_param"
-    },
-        {
-        "name": "MixedOutVelo",
-        "xdata": "BL_param",
-        "ydata": "vout",
-        "group_by": "Mach",
-        "sort_by": "Mach",
-        "xlabel": "BL_param",
-        "ylabel": "Mixed Out Velocity (m/s)",
-        "title": "MixedOutVelocity vs BL_param"
-    }
-]
-'''
 
 plot_configs = [
     {
@@ -539,91 +477,57 @@ bl_list   = sorted(set(run.BL_param for run in cfd_runs))
 vscale = {0.1: 70000,0.2: 100000,0.3: 150000}
 # 31606.76506,61150.77373,92205.51357
 
-plt.show()
-sys.exit()
+
+# Custom CMAP
+base_cmap = mpl.colormaps['rocket_r']
+cmap_colors = base_cmap(np.linspace(0, 0.80, 256))
+cmap = mpl.colors.LinearSegmentedColormap.from_list(
+    "blue_half", cmap_colors
+)
 
 # Vorticity Plot
 for mach in mach_list:
 
+    vmin = 0
     vmax = vscale[mach]
-    ticks = len(np.arange(-vmax, vmax + 25000, 25000))
+    ticks = len(np.arange(vmin, vmax + 25000, 25000))
     if ticks<=5:
         ticks = 9
 
-
     fig, axes = plt.subplots(1, len(bl_list), figsize=(5*len(bl_list), 4),
                              constrained_layout=True)
-    
     for ax, bl_param in zip(axes, bl_list):        
 
-        matching_runs = [run for run in cfd_runs if run.Mach == 0.3 and run.BL_param == bl_param]
+        matching_runs = [run for run in cfd_runs if run.Mach == mach and run.BL_param == bl_param]
 
         if matching_runs:
 
             run = matching_runs[0]
-            run.inlet_plane.contour_plot(
+            run.outlet_plane.contour_plot(
                 ax=ax,
                 name=f"BL = {bl_param}",
-                value_col='Vorticity[j] (/s)',
+                value_col='Vorticity[i] Magnitude (/s)',
                 plot_type='filled',
                 deadband=0,
                 levels=500,
                 y_lim=0.005,
-                vmin=-vmax,
+                vmin=vmin,
                 vmax=vmax,
-                cmap = 'RdBu'
+                cmap = cmap
             )
 
             contour_obj = ax.collections[0]
 
-    fig.suptitle(f"Outlet Vorticity Contours [i] — Mach {mach}", fontsize=16)
+    fig.suptitle(f"Outlet Vorticity Magnitude Contours [i] — Mach {mach}", fontsize=16)
 
     if contour_obj is not None:
         colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
-        colorbar.set_ticks(np.linspace(-vmax, vmax, ticks))
-
-
-
-    '''
-    if cfd_run.Mach == 0.3:
-        if cfd_run.BL_param == 0.005:
-                pass
-        
-    
-    cfd_run.outlet_plane.contour_plot(name = (cfd_run.name + ' Outlet - Vorticity i'), 
-                        value_col='Vorticity[i] (/s)',
-                        plot_type = 'filled',
-                        deadband = 0,
-                        levels = 500, 
-                        y_lim = 0.01,
-                        vmin = -100000,
-                        vmax = 100000)
-
-    '''
-
-    
-    '''
-
-    cfd_run.outlet_plane.contour_plot(name = (cfd_run.name + ' Outlet - Velocity i'), 
-                                      value_col='Velocity[i] (m/s)',
-                                      plot_type = 'filled',
-                                      deadband = 0,
-                                      levels = 500, 
-                                      y_lim = 0.01,
-                                      vmin = 0,
-                                      vmax = 80)
-    '''
-    
-    
-
-
-    
-
-    #cfd_run.inlet_plane.contour_plot(name = (cfd_run.name + ' Inlet - Vorticity j'), value_col = 'Vorticityj', plot_type = 'filled',levels = 500, y_lim = 0.025,grid_res = 5000)
+        colorbar.set_ticks(np.linspace(vmin, vmax, ticks))
 
 # Vorticity Magnitude
 for mach in mach_list:
 
+    vmin = 0
     vmax = vscale[mach]
     ticks = len(np.arange(0, vmax + 25000, 25000))
     if ticks<=5:
@@ -650,7 +554,8 @@ for mach in mach_list:
                 y_lim=0.005,
                 vmin=0,
                 vmax=vmax,
-                cmap = 'plasma'
+                cmap = cmap,
+                norm= colors.PowerNorm(gamma=1.25)
             )
 
             contour_obj = ax.collections[0]
@@ -659,6 +564,142 @@ for mach in mach_list:
 
     if contour_obj is not None:
         colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
-        colorbar.set_ticks(np.linspace(0, vmax, ticks))
+        colorbar.set_ticks(np.linspace(vmin, vmax, ticks))
+
+# Floor Plot
+for mach in mach_list:
+
+    vmax = 450000
+    vmin = 0
+    ticks = len(np.arange(vmin, vmax + 50000, 50000))
+    if ticks<=5:
+        ticks = 9
+
+
+    fig, axes = plt.subplots(1, len(bl_list), figsize=(5*len(bl_list), 4),
+                             constrained_layout=True)
+    
+    for ax, bl_param in zip(axes, bl_list):        
+
+        matching_runs = [run for run in cfd_runs if run.Mach == 0.3 and run.BL_param == bl_param]
+
+        if matching_runs:
+
+            run = matching_runs[0]
+            run.BL_slice.contour_plot(
+                ax=ax,
+                name=f"BL = {bl_param}",
+                value_col='Vorticity: Magnitude (/s)',
+                plot_type='filled',
+                x_col = 'Centroid[X] (m)',
+                y_col = 'Centroid[Y] (m)',
+                x_lim_min = -2,
+                x_lim_max = 5,
+                deadband=0,
+                levels=500,
+                y_lim=None,
+                vmin=vmin,
+                vmax=vmax,
+                cmap = cmap,
+                norm = colors.PowerNorm(gamma=1.25)
+            )
+
+            contour_obj = ax.collections[0]
+
+    fig.suptitle(f"Floor Vorticity Magnitude — Mach {mach}", fontsize=16)
+
+    if contour_obj is not None:
+        colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
+        colorbar.set_ticks(np.linspace(vmin, vmax, ticks))
+
+for mach in mach_list:
+
+    vmax = 450000
+    vmin = 0
+    ticks = len(np.arange(vmin, vmax + 50000, 50000))
+    if ticks<=5:
+        ticks = 9
+
+
+    fig, axes = plt.subplots(1, len(bl_list), figsize=(5*len(bl_list), 4),
+                             constrained_layout=True)
+    
+    for ax, bl_param in zip(axes, bl_list):        
+
+        matching_runs = [run for run in cfd_runs if run.Mach == 0.3 and run.BL_param == bl_param]
+
+        if matching_runs:
+
+            run = matching_runs[0]
+            run.BL_slice.contour_plot(
+                ax=ax,
+                name=f"BL = {bl_param}",
+                value_col='Vorticity[i] Magnitude (/s)',
+                plot_type='filled',
+                x_col = 'Centroid[X] (m)',
+                y_col = 'Centroid[Y] (m)',
+                x_lim_min = -2,
+                x_lim_max = 5,
+                deadband=0,
+                levels=500,
+                y_lim=None,
+                vmin=vmin,
+                vmax=vmax,
+                cmap = cmap,
+                norm = colors.PowerNorm(gamma=1.25)
+            )
+
+            contour_obj = ax.collections[0]
+
+    fig.suptitle(f"Vorticity[i] Magnitude (/s) — Mach {mach}", fontsize=16)
+
+    if contour_obj is not None:
+        colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
+        colorbar.set_ticks(np.linspace(vmin, vmax, ticks))
+
+for mach in mach_list:
+
+    vmax = 450000
+    vmin = 0
+    ticks = len(np.arange(vmin, vmax + 50000, 50000))
+    if ticks<=5:
+        ticks = 9
+
+
+    fig, axes = plt.subplots(1, len(bl_list), figsize=(5*len(bl_list), 4),
+                             constrained_layout=True)
+    
+    for ax, bl_param in zip(axes, bl_list):        
+
+        matching_runs = [run for run in cfd_runs if run.Mach == 0.3 and run.BL_param == bl_param]
+
+        if matching_runs:
+
+            run = matching_runs[0]
+            run.BL_slice.contour_plot(
+                ax=ax,
+                name=f"BL = {bl_param}",
+                value_col='Vorticity[j] Magnitude (/s)',
+                plot_type='filled',
+                x_col = 'Centroid[X] (m)',
+                y_col = 'Centroid[Y] (m)',
+                x_lim_min = -2,
+                x_lim_max = 5,
+                deadband=0,
+                levels=500,
+                y_lim=None,
+                vmin=vmin,
+                vmax=vmax,
+                cmap = cmap,
+                norm = colors.PowerNorm(gamma=1.25)
+            )
+
+            contour_obj = ax.collections[0]
+
+    fig.suptitle(f"Vorticity[j] Magnitude (/s) — Mach {mach}", fontsize=16)
+
+    if contour_obj is not None:
+        colorbar = fig.colorbar(contour_obj, ax=axes, pad=0.02)
+        colorbar.set_ticks(np.linspace(vmin, vmax, ticks))
 
 plt.show()
