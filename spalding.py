@@ -101,6 +101,7 @@ def plot_BL(df,ax=None,y_lim = None):
 
     mid = len(df)//2
     # Plot using axis object (not plt directly)
+    #m_val=[]
     ax.plot(df.iloc[:mid, 3], df.iloc[:mid, 2], label="Spalding Law")
 
     ax.set_xlabel("Velocity (m/s)")
@@ -135,7 +136,7 @@ h_param_max = 5e-3
 
 plot = True
 total_pressureTF = False
-save = True
+save = False
 
 
 ''''''''''''''''''''''''''''''''''''''''''''
@@ -155,11 +156,113 @@ for mach in m_array:
         delta = h_param * channel_height
         df = create_BL_profile(velo, delta, total_pressure=total_pressureTF)
         BL_array.append(df)
+'''
+if plot:
+    fig, ax = plt.subplots()
 
+    #cmap = plt.get_cmap("viridis")
+    #base_colors = cmap(np.linspace(0, 1, len(m_array)))
+    base_colors = plt.get_cmap("tab10").colors  # clean, readable, no neon colors
+
+    linestyles = ["-", "--", ":", "-."]  # cycle if more h_params exist
+
+    n_h = len(h_param_array)
+
+    for i, BL_df in enumerate(BL_array):
+        mach_idx = i // n_h
+        h_idx = i % n_h
+
+        mach_value = m_array[mach_idx]
+        h_value = h_param_array[h_idx]
+
+        base_color = base_colors[mach_idx]
+
+        # create "shade" by scaling brightness via alpha + slight RGB blend
+        shade_factor = 0.4 + 0.6 * (h_idx / max(n_h - 1, 1))
+        color = base_color
+
+        mid = len(df)//2
+
+        ax.plot(
+            BL_df.iloc[:mid, 3]/a,   # Velocity_X
+            BL_df.iloc[:mid, 2],   # Z distance
+            color=color,
+            linestyle=linestyles[h_idx % len(linestyles)],
+            alpha=0.9
+        )
+
+    # legend for Mach only (clean)
+    for j, mach in enumerate(m_array):
+        ax.plot([], [], color=base_colors[j], label= rf"$M_{{\Gamma}} = {mach_value:.2f}$")
+
+    ax.set_xlabel("Velocity (m/s)")
+    ax.set_ylabel("Distance from wall (m)")
+    ax.set_title("Turbulent Boundary Layer Profiles")
+    ax.set_ylim(0,0.005)
+    ax.grid()
+    ax.legend()
+'''
+'''
 if plot:
     fig, ax = plt.subplots()
     for BL_df in BL_array:
         plot_BL(BL_df, ax=ax,y_lim=0.01)
+'''
+if plot:
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    base_colors = plt.get_cmap("tab10").colors
+    linestyles = ["-", "--", ":", "-."]
+
+    n_h = len(h_param_array)
+
+    for i, BL_df in enumerate(BL_array):
+        mach_idx = i // n_h
+        h_idx = i % n_h
+
+        mach_value = m_array[mach_idx]
+        h_value = h_param_array[h_idx]
+
+        # Shade within a Mach group to show Pi_BL variation
+        shade_factor = 0.35 + 0.65 * (h_idx / max(n_h - 1, 1))
+        base = base_colors[mach_idx % len(base_colors)]
+        color = tuple(c * shade_factor for c in base[:3])
+
+        mid = len(BL_df) // 2  # Fix: was referencing stale `df`
+
+        ax.plot(
+            BL_df.iloc[:mid, 3],   # Mach number
+            BL_df.iloc[:mid, 2]*100,        # Wall distance
+            color=color,
+            linestyle=linestyles[h_idx % len(linestyles)],
+            alpha=0.9,
+            linewidth=1.5
+        )
+
+    # Legend 1: Gamma_R / Mach groups (color)
+    mach_handles = [
+        plt.Line2D([0], [0], color=base_colors[j % len(base_colors)], linewidth=2,
+                   label=rf"$M_{{\Gamma}} = {m_array[j]:.2f}$")
+        for j in range(len(m_array))
+    ]
+
+    # Legend 2: Pi_BL groups (linestyle)
+    pi_handles = [
+        plt.Line2D([0], [0], color='gray', linewidth=2,
+                   linestyle=linestyles[k % len(linestyles)],
+                   label=rf"$\Pi_{{BL}} = {h_param_array[k]:.3f}$")
+        for k in range(n_h)
+    ]
+
+    leg1 = ax.legend(handles=mach_handles, loc="upper left", title=r"$M_\Gamma$", framealpha=0.9)
+    ax.add_artist(leg1)
+    ax.legend(handles=pi_handles, loc="upper left", bbox_to_anchor = (0,0.72), title=r"$\Pi_{BL}$", framealpha=0.9)
+
+    ax.set_xlabel(r"Flow Velocity, m/s")  # Fix: was labeled m/s but showing Mach
+    ax.set_ylabel(r"$y/H$ (%)")
+    #ax.set_title(r"Turbulent BL Profiles: $M_\Gamma$ vs $\Pi_{BL}$")
+    ax.set_ylim(0, 0.75)
+    ax.grid(True, linestyle='--', alpha=0.5)
 
 if total_pressureTF:
     for BL_df in BL_array:
